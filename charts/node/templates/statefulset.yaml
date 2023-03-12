@@ -581,6 +581,8 @@ spec:
                 {{- end }}
                 {{- if .Values.node.wasmRuntimeUrl }}
                 --wasm-runtime-overrides={{ .Values.node.wasmRuntimeOverridesPath }} \
+                {{- else if .Values.node.wasmRuntimeOverrideEnabled }}
+                --wasm-runtime-overrides={{ .Values.node.wasmRuntimeOverridesPath }} \
                 {{- end }}
                 {{- if .Values.node.tracing.enabled }}
                 --jaeger-agent=127.0.0.1:{{ .Values.jaegerAgent.ports.compactPort }} \

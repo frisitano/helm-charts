@@ -414,6 +414,7 @@ node:
 
   ## Define the WASM runtime overrides directory path
   ##
+  wasmRuntimeOverrideEnabled: false
   wasmRuntimeOverridesPath: "/chain-data/runtimes"
   ## Download a WASM runtime to override the on-chain runtime when the version matches
   ## Note that this will download the runtime file in the directory specified in `node.wasmRuntimeOverridesPath`
