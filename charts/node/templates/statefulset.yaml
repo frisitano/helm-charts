@@ -548,7 +548,6 @@ spec:
                 It is not a security risk unless they are exposed publicly.
                 */}}
                 --unsafe-rpc-external \
-                --unsafe-ws-external \
                 {{- /*
                 CORS must be set to 'all' to allow RPC requests including Kubernetes heathchecks.
                 */}}
