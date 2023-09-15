@@ -1,84 +1,117 @@
-# Default values for faucetbot.
-# This is a YAML-formatted file.
-# Declare variables to be passed into your templates.
+# -- Docker image parameters
+image:
+  # -- Image repository
+  repository: paritytech/faucet
+  # -- Image tag (immutable tags are recommended)
+  tag: latest
+  # -- Image pull policy
+  pullPolicy: Always
+  # -- Image pull policy
+  pullSecrets: []
 
-chain:
-  name: substrate
-
-replicaCount: 1
-
-server:
-  image:
-    repository: paritytech/faucet-server
-    tag: latest
-    pullPolicy: Always
+# -- Faucet parameters
+faucet:
+  # -- existingConfigMap
   existingConfigMap: ''
+  # -- existingSecret
   existingSecret: ''
+  # -- externalAccess
   externalAccess: false
-  secret:
-    SMF_BACKEND_FAUCET_ACCOUNT_MNEMONIC: "this is a fake mnemonic"
-    SMF_BACKEND_RECAPTCHA_SECRET: "fakeRecaptchaSecret"
-  config:
-    SMF_BACKEND_RPC_ENDPOINT: "https://example.com/"
-    SMF_BACKEND_NETWORK_DECIMALS: 12
-    SMF_BACKEND_INJECTED_TYPES: '{}'
-    SMF_BACKEND_PORT: 5555
-    SMF_BACKEND_DRIP_AMOUNT: 10
-bot:
-  enabled: true
-  image:
-    repository: paritytech/faucet-bot
-    tag: latest
-    pullPolicy: Always
-  existingConfigMap: ""
-  existingSecret: ""
-  secret:
-    SMF_BOT_MATRIX_ACCESS_TOKEN: "ThisIsNotARealAccessToken"
-  config:
-    SMF_BOT_MATRIX_SERVER: "https://matrix.org"
-    SMF_BOT_MATRIX_BOT_USER_ID: "@test_bot_faucet:matrix.org"
-    SMF_BOT_DRIP_AMOUNT: 10
-    SMF_BOT_NETWORK_DECIMALS: 12
-    SMF_BOT_NETWORK_UNIT: "UNIT"
-    SMF_BOT_FAUCET_IGNORE_LIST: ''
-ingress:
-  enabled: false
-#    annotations:
-#    host: example.com
-#    tls:
 
+  secret:
+    # -- Mnemonic seed for the faucet account
+    SMF_CONFIG_FAUCET_ACCOUNT_MNEMONIC: "this is a fake mnemonic"
+    # -- A secret recaptcha token used to validate external requests
+    SMF_CONFIG_RECAPTCHA_SECRET: "fakeRecaptchaSecret"
+    # -- Matrix Bot access token
+    SMF_CONFIG_MATRIX_ACCESS_TOKEN: "ThisIsNotARealAccessToken"
+
+  config:
+    # -- network name: rococo, westend, wococo, etc.
+    SMF_CONFIG_NETWORK: "rococo"
+    # -- Matrix server URL
+    SMF_CONFIG_MATRIX_SERVER: "https://matrix.org"
+    # -- Bot user ID
+    SMF_CONFIG_MATRIX_BOT_USER_ID: "@test_bot_faucet:matrix.org"
+    # -- A list of Matrix accounts that will be silently ignored. Example: \"@alice:matrix.org,@bob:domain.com\"
+    SMF_CONFIG_FAUCET_IGNORE_LIST: ''
+
+# -- Number of replicas pods for the faucet (recommended to keep it at 1)
+replicaCount: 1
+# -- Labels to add to all deployed objects
 extraLabels: []
-
-imagePullSecrets: []
+# -- String to partially override common.names.name
 nameOverride: ""
+# -- String to fully override common.names.fullname
 fullnameOverride: ""
 
+# -- ServiceAccount configuration
 serviceAccount:
-  # Specifies whether a service account should be created
+  # -- Specifies whether a ServiceAccount should be created
   create: true
-  # The name of the service account to use.
-  # If not set and create is true, a name is generated using the fullname template
-  name: westend
-
+  # -- The name of the ServiceAccount to use.
+  # If not set and create is true, a name is generated using the common.names.fullname template
+  name: ""
+# -- Pods Security Context
+# ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/#set-the-security-context-for-a-pod
 podSecurityContext: {}
-
-resources: {}
-  # We usually recommend not to specify default resources and to leave this as a conscious
-  # choice for the user. This also increases chances charts run on environments with little
-  # resources, such as Minikube. If you do want to specify resources, uncomment the following
-  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
-  # limits:
-  #   cpu: 100m
-  #   memory: 128Mi
-  # requests:
-  #   cpu: 100m
-  #   memory: 128Mi
-
+# -- Resource requests and limits
+# ref: http://kubernetes.io/docs/user-guide/compute-resources/
+resources:
+  # -- The resources limits for containers
+  limits: {}
+  # -- The requested resources for containers
+  requests: {}
+# -- Node labels for pods assignment
+# ref: https://kubernetes.io/docs/user-guide/node-selection/
 nodeSelector: {}
-
+# -- Tolerations for pods assignment
+# ref: https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
 tolerations: []
-
+# -- Affinity for pods assignment
+# ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#affinity-and-anti-affinity
 affinity: {}
-
+# -- ServiceMonitor configuration
 serviceMonitor:
-  enabled: true
+  # -- Specifies whether a ServiceMonitor should be created
+  enabled: false
+  # -- Duration between scrapes of the target endpoint
+  interval: 1m
+  # -- Timeout for each scrape request
+  scrapeTimeout: 30s
+  # -- List of target labels to be added to all metrics collected from this service monitor
+  targetLabels: []
+
+# -- Ingress configuration
+ingress:
+  # -- Specifies whether as Ingress should be created
+  enabled: false
+
+# -- PostgreSQL configuration
+postgresql:
+  global:
+    postgresql:
+      # -- Auth configuration
+      auth:
+        # -- Database name
+        database: faucet
+        # -- Database password
+        postgresPassword: "Secret!"
+  # -- Primary PostgreSQL configuration
+  primary:
+    # -- Storage configuration
+    persistence:
+      # -- Storage size
+      size: 4Gi
+    # -- Resources requests/limits for the container
+    resources:
+      limits:
+        # -- CPU limit
+        #cpu: 500m
+        # -- Memory limit
+        memory: 1024Mi
+      requests:
+        # -- CPU requests
+        cpu: 250m
+        # -- Memory requests
+        memory: 512Mi

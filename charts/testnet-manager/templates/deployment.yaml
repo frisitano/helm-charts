@@ -17,7 +17,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       labels:
-        {{- include "testnet-manager.selectorLabels" . | nindent 8 }}
+        {{- include "testnet-manager.labels" . | nindent 8 }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -41,6 +41,10 @@ spec:
           env:
           - name: NAMESPACE
             value: {{ .Release.Namespace | quote }}
+          {{ if .Values.externalValidators }}
+          - name: EXTERNAL_VALIDATORS_CONFIGMAP
+            value: {{ include "testnet-manager.external-validators-configmap" . }}
+          {{- end }}
           {{- with .Values.extraEnv }}
           {{- toYaml . | nindent 10 }}
           {{- end }}

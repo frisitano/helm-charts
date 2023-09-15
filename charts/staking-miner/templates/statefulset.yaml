@@ -89,10 +89,11 @@ spec:
                 secretKeyRef:
                   name: {{ include "common.secrets.name" (dict "existingSecret" .Values.stakingMiner.existingSecret "context" $) }}
                   key: {{ include "common.secrets.key" (dict "existingSecret" .Values.stakingMiner.existingSecret "key" "config") }}
+          resources: {{- toYaml .Values.generateConfig.resources | nindent 12 }}
           volumeMounts:
           - name: configs
             mountPath: "/config"
-        {{- if .Values.waitRuntimeUpgrade }}
+        {{- if .Values.waitRuntimeUpgrade.enabled }}
         - name: wait-runtime-upgrade
           image:  {{ template "stakingminer.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -104,11 +105,12 @@ spec:
               CMD="staking-miner info --uri $(cat /config/uri)"
               $CMD
               until $CMD | grep -B20 'Compatible: YES'
-              do 
+              do
                 echo "VERSION MISMATCH: Waiting for correct runtime, retrying soon.."
                 sleep 60
               done
           securityContext: {{- omit .Values.containerSecurityContext "enabled" | toYaml | nindent 12 }}
+          resources: {{- toYaml .Values.waitRuntimeUpgrade.resources | nindent 12 }}
           volumeMounts:
             - name: configs
               mountPath: "/config"

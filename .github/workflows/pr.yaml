@@ -27,11 +27,19 @@ jobs:
     - name: Set up Helm
       uses: azure/setup-helm@v3.3
       with:
-        version: v3.8.1
+        version: v3.12.1
 
     - uses: actions/setup-python@v4
       with:
-        python-version: "3.10"
+        python-version: "3.11"
+
+    - name: Install pre-commit and helm-docs
+      run: |
+        pip install pre-commit==3.3.3
+        curl -fSsL -o - https://github.com/norwoodj/helm-docs/releases/download/v1.11.0/helm-docs_1.11.0_Linux_x86_64.tar.gz | tar -xz -C /usr/local/bin helm-docs
+
+    - name: Run pre-commit hooks
+      run: pre-commit run --all-files
 
     - name: Set up chart-testing
       uses: helm/chart-testing-action@v2.3.1
@@ -45,7 +53,7 @@ jobs:
       run: |
         changed=$(ct list-changed --target-branch ${{ github.event.repository.default_branch }})
         if [[ -n "$changed" ]]; then
-          echo "changed=$changed" >> $GITHUB_OUTPUT
+          echo "changed=$(echo "$changed" | tr '\n' ',' | sed 's/,$/\n/')" >> $GITHUB_OUTPUT
         fi
 
     - name: Run chart-testing (lint)
@@ -57,19 +65,21 @@ jobs:
       if: steps.list-changed.outputs.changed
 
     - name: Create kind cluster
-      uses: helm/kind-action@v1.4.0
+      uses: helm/kind-action@v1.7.0
       with:
-        node_image: kindest/node:v1.21.10
+        node_image: kindest/node:v1.27.3
+        config: chart-testing/kind-config.yaml
       if: steps.list-changed.outputs.changed
 
     - name: Replace secrets in Helm charts
       env:
-        SMF_BOT_MATRIX_ACCESS_TOKEN: ${{ secrets.SMF_BOT_MATRIX_ACCESS_TOKEN }}
+        # TODO: rename the secret to avoid confusion
+        SMF_CONFIG_MATRIX_ACCESS_TOKEN: ${{ secrets.SMF_BOT_MATRIX_ACCESS_TOKEN }}
         STAKING_MINER_CONFIG_SEED: ${{ secrets.STAKING_MINER_CONFIG_SEED }}
       run: |
         shopt -s globstar
         for f in $(find **/ci/*-values.yaml); do
-          sed -i "s/__GITHUB_SECRET_SMF_BOT_MATRIX_ACCESS_TOKEN/$SMF_BOT_MATRIX_ACCESS_TOKEN/g" $f
+          sed -i "s/__GITHUB_SECRET_SMF_CONFIG_MATRIX_ACCESS_TOKEN/$SMF_CONFIG_MATRIX_ACCESS_TOKEN/g" $f
           sed -i "s/__GITHUB_SECRET_STAKING_MINER_CONFIG_SEED/$STAKING_MINER_CONFIG_SEED/g" $f
         done
       if: steps.list-changed.outputs.changed
@@ -80,3 +90,24 @@ jobs:
         --target-branch ${{ github.event.repository.default_branch }} \
         --charts ${{ steps.list-changed.outputs.changed }}
       if: steps.list-changed.outputs.changed
+
+  validate-manifests:
+    runs-on: ubuntu-latest
+    container: docker.io/paritytech/kube-manifests-validation:k8s-1.25.9-gator-3.12.0-datree-1.9.19-9196b4c
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - run: |
+        git config --system --add safe.directory $GITHUB_WORKSPACE
+        git fetch origin "+${GITHUB_BASE_REF}:${GITHUB_BASE_REF}"
+
+    - name: Validate manifests
+      run: |
+        /app/validate-k8s-manifests.sh \
+          --datree-policy-config /app/datree-policies.yaml \
+          --git-ref-changed-paths $GITHUB_BASE_REF \
+          --skip-gatekeeper \
+          charts

@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    {{- include "faucet.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      {{- include "faucet.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "faucet.labels" . | nindent 8 }}
+      annotations:
+        configmap/checksum: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        secret/checksum: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+    {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+      serviceAccountName: {{ include "faucet.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: faucet
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: SMF_CONFIG_PORT
+              value: "5555"
+            - name: SMF_CONFIG_DEPLOYED_REF
+              value: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+            - name: SMF_CONFIG_EXTERNAL_ACCESS
+              value: {{ .Values.faucet.externalAccess | quote }}
+          envFrom:
+            - configMapRef:
+                name: {{ $.Values.faucet.existingConfigMap | default (printf "%s-config" $.Release.Name) }}
+            - secretRef:
+                name: {{ $.Values.faucet.existingSecret | default (printf "%s-secret" $.Release.Name) }}
+          ports:
+            - name: http
+              containerPort: 5555
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 5555
+            failureThreshold: 0
+            periodSeconds: 10
+            initialDelaySeconds: 60
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5555
+            failureThreshold: 0
+            periodSeconds: 30
+            initialDelaySeconds: 60
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}

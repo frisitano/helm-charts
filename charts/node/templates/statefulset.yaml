@@ -15,6 +15,10 @@ spec:
     matchLabels:
   {{- $selectorLabels | nindent 6 }}
   podManagementPolicy: {{ default "OrderedReady" .Values.node.podManagementPolicy }}
+  {{- if .Values.node.persistentVolumeClaimRetentionPolicy }}
+  persistentVolumeClaimRetentionPolicy:
+    {{- toYaml .Values.node.persistentVolumeClaimRetentionPolicy | nindent 4 }}
+  {{- end }}
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.node.replicas | int }}
   {{- end }}
@@ -79,179 +83,152 @@ spec:
       {{- toYaml . | nindent 8 }}
       {{- end }}
       initContainers:
-        {{- if .Values.node.chainData.snapshotUrl }}
+        {{- if .Values.node.chainData.chainSnapshot.enabled }}
         - name: download-chain-snapshot
-          image: {{ .Values.initContainer.image.repository }}:{{ .Values.initContainer.image.tag }}
+          image: {{ .Values.initContainers.downloadChainSnapshot.image.repository }}:{{ .Values.initContainers.downloadChainSnapshot.image.tag }}
           command: [ "/bin/sh" ]
           args:
             - -c
             - |
-              set -eu -o pipefail {{ if .Values.initContainer.debug }}-x{{ end }}
+              set -eu -o pipefail {{ if .Values.initContainers.downloadChainSnapshot.debug }}-x{{ end }}
               if [ -d "/chain-data/chains/${CHAIN_PATH}/{{ $databasePath }}" ]; then
                 echo "Database directory already exists, skipping chain snapshot download"
               else
+                trap 'echo -e "Snapshot restoration failed. Checkout the logs for errors.\nRemoving /chain-data/chains/${CHAIN_PATH}/{{ $databasePath }} ..."; rm -rf /chain-data/chains/${CHAIN_PATH}/{{ $databasePath }}' ERR
+                PARALLEL_TRANFERS="$(($(nproc --all) * 5 < 50 ? $(nproc --all) * 5 : 50))" # MIN(vCPU_count * 5, 50)
                 echo "Downloading chain snapshot"
-                SNAPSHOT_URL="{{ .Values.node.chainData.snapshotUrl }}"
+                SNAPSHOT_URL="{{ .Values.node.chainData.chainSnapshot.url }}"
                 mkdir -p /chain-data/chains/${CHAIN_PATH}/{{ $databasePath }}/
-                if [ "${SNAPSHOT_FORMAT}" == "lz4" ]; then
-                  wget -O - ${SNAPSHOT_URL} | lz4 -c -d - | tar -x -C /chain-data/chains/${CHAIN_PATH}/
-                else
-                  wget -O - ${SNAPSHOT_URL} | tar -x -C /chain-data/chains/${CHAIN_PATH}/{{ $databasePath }}/
+
+                if [ "${METHOD}" == "http-single-tar-lz4" ]; then
+                  apk add lz4 --no-cache
+                  rclone copyurl {{ .Values.initContainers.downloadChainSnapshot.cmdArgs }} --stdout --retries 1 --error-on-no-transfer --no-gzip-encoding ${SNAPSHOT_URL} | lz4 -c -d - | tar -x -C /chain-data/chains/${CHAIN_PATH}/
+                  chown -R {{ .Values.podSecurityContext.runAsUser }}:{{ .Values.podSecurityContext.fsGroup }} /chain-data/chains/${CHAIN_PATH}/
+
+                elif [ "${METHOD}" == "http-single-tar" ]; then
+                  rclone copyurl {{ .Values.initContainers.downloadChainSnapshot.cmdArgs }} --stdout --retries 1 --error-on-no-transfer --no-gzip-encoding ${SNAPSHOT_URL} | tar -x -C /chain-data/chains/${CHAIN_PATH}/
+
+                elif [ "${METHOD}" == "gcs" ]; then
+                  LATEST=$(rclone cat {{ .Values.initContainers.downloadChainSnapshot.cmdArgs }} --quiet :gcs:${SNAPSHOT_URL}/latest_version.meta.txt)
+                  if [ -z "$LATEST" ]; then
+                    echo "Failed to retrieve latest_version.meta.txt file. Will download everything from ${SNAPSHOT_URL} instead"
+                  fi
+                  rclone sync {{ .Values.initContainers.downloadChainSnapshot.cmdArgs }} --fast-list --transfers $PARALLEL_TRANFERS --progress --retries 6 --retries-sleep 10 --error-on-no-transfer --inplace --no-gzip-encoding :gcs:${SNAPSHOT_URL}/${LATEST} /chain-data/chains/${CHAIN_PATH}/{{ $databasePath }}/
+
+                elif [ "${METHOD}" == "s3" ]; then
+                  LATEST=$(rclone cat {{ .Values.initContainers.downloadChainSnapshot.cmdArgs }} --quiet :s3:${SNAPSHOT_URL}/latest_version.meta.txt )
+                  if [ -z "$LATEST" ]; then
+                    echo "Failed to retrieve latest_version.meta.txt file. Will download everything from ${SNAPSHOT_URL} instead"
+                  fi
+                  rclone sync {{ .Values.initContainers.downloadChainSnapshot.cmdArgs }} --fast-list --transfers $PARALLEL_TRANFERS --progress --retries 6 --retries-sleep 10 --error-on-no-transfer --inplace --no-gzip-encoding :s3:${SNAPSHOT_URL}/${LATEST} /chain-data/chains/${CHAIN_PATH}/{{ $databasePath }}/
+
+                elif [ "${METHOD}" == "http-filelist" ]; then
+                  LATEST=$(rclone copyurl {{ .Values.initContainers.downloadChainSnapshot.cmdArgs }} --stdout ${SNAPSHOT_URL}/latest_version.meta.txt )
+                  if [ -z "$LATEST" ]; then
+                    echo "Failed to retrieve latest_version.meta.txt file. Will download everything from ${SNAPSHOT_URL} instead"
+                  else
+                    SNAPSHOT_URL="${SNAPSHOT_URL}/${LATEST}"
+                  fi
+                  rclone copyurl {{ .Values.initContainers.downloadChainSnapshot.cmdArgs }} --retries 6 --retries-sleep 10 --error-on-no-transfer --inplace --no-gzip-encoding ${SNAPSHOT_URL}/{{ .Values.node.chainData.chainSnapshot.filelistName }} /tmp/filelist.txt
+                  rclone copy {{ .Values.initContainers.downloadChainSnapshot.cmdArgs }} --transfers $PARALLEL_TRANFERS --progress --retries 6 --retries-sleep 10 --error-on-no-transfer --inplace --no-gzip-encoding --http-url ${SNAPSHOT_URL} --no-traverse --http-no-head --disable-http2 --size-only --files-from /tmp/filelist.txt :http: /chain-data/chains/${CHAIN_PATH}/{{ $databasePath }}/
                 fi
               fi
           env:
             - name: CHAIN_PATH
               value: {{ default .Values.node.chain .Values.node.chainData.chainPath }}
-            - name: SNAPSHOT_FORMAT
-              value: {{ default "tar" .Values.node.chainData.snapshotFormat }}
+            - name: METHOD
+              value: {{ .Values.node.chainData.chainSnapshot.method }}
+            {{- with .Values.initContainers.downloadChainSnapshot.extraEnvVars }}
+            {{- toYaml . | nindent 12 }}
+            {{- end}}
+          resources:
+          {{- toYaml .Values.initContainers.downloadChainSnapshot.resources | nindent 12 }}
           volumeMounts:
             - mountPath: /chain-data
               name: chain-data
+          # run as root as lz4 is missing from the default image and can only be installed by the root user
+          {{- if eq .Values.node.chainData.chainSnapshot.method "http-single-tar-lz4" }}
+          securityContext:
+            runAsUser: 0
+          {{- end }}
         {{- end }}
-        {{- if .Values.node.collatorRelayChain.chainData.snapshotUrl }}
+        {{- if and .Values.node.collatorRelayChain.chainData.chainSnapshot.enabled (and (not .Values.node.collatorExternalRelayChain.enabled ) (not .Values.node.collatorLightClient.enabled)) }}
         - name: download-relay-chain-snapshot
-          image: {{ .Values.initContainer.image.repository }}:{{ .Values.initContainer.image.tag }}
+          image: {{ .Values.initContainers.downloadChainSnapshot.image.repository }}:{{ .Values.initContainers.downloadChainSnapshot.image.tag }}
           command: [ "/bin/sh" ]
           args:
             - -c
             - |
-              set -eu -o pipefail {{ if .Values.initContainer.debug }}-x{{ end }}
+              set -eu -o pipefail {{ if .Values.initContainers.downloadChainSnapshot.debug }}-x{{ end }}
               if [ -d "/relaychain-data/chains/${RELAY_CHAIN_PATH}/{{ $databasePath }}" ]; then
-                echo "Database directory already exists, skipping relay-chain snapshot download"
+                echo "Database directory already exists, skipping chain snapshot download"
               else
-                echo "Downloading relay-chain snapshot"
-                RELAY_SNAPSHOT_URL="{{ .Values.node.collatorRelayChain.chainData.snapshotUrl }}"
-                mkdir -p /relaychain-data/chains/${RELAY_CHAIN_PATH}/{{ $databasePath }}
-                if [ "${RELAY_SNAPSHOT_FORMAT}" == "lz4" ]; then
-                  wget -O - ${RELAY_SNAPSHOT_URL} | lz4 -c -d - | tar -x -C /relaychain-data/chains/${RELAY_CHAIN_PATH}/
-                else
-                  wget -O - ${RELAY_SNAPSHOT_URL} | tar -x -C /relaychain-data/chains/${RELAY_CHAIN_PATH}/{{ $databasePath }}/
+                trap 'echo -e "Snapshot restoration failed. Checkout the logs for errors.\nRemoving /relaychain-data/chains/${RELAY_CHAIN_PATH}/{{ $databasePath }} ..."; rm -rf /relaychain-data/chains/${RELAY_CHAIN_PATH}/{{ $databasePath }}' ERR
+                PARALLEL_TRANFERS="$(($(nproc --all) * 5 < 50 ? $(nproc --all) * 5 : 50))" # MIN(vCPU_count * 5, 50)
+                echo "Downloading chain snapshot"
+                SNAPSHOT_URL="{{ .Values.node.collatorRelayChain.chainData.chainSnapshot.url }}"
+                mkdir -p /relaychain-data/chains/${RELAY_CHAIN_PATH}/{{ $databasePath }}/
+
+                if [ "${METHOD}" == "http-single-tar-lz4" ]; then
+                  apk add lz4 --no-cache
+                  rclone copyurl {{ .Values.initContainers.downloadChainSnapshot.cmdArgs }} --stdout --error-on-no-transfer ${SNAPSHOT_URL} | lz4 -c -d - | tar -x -C /relaychain-data/chains/${RELAY_CHAIN_PATH}/
+                  chown -R {{ .Values.podSecurityContext.runAsUser }}:{{ .Values.podSecurityContext.fsGroup }} /relaychain-data/chains/${RELAY_CHAIN_PATH}/
+
+                elif [ "${METHOD}" == "http-single-tar" ]; then
+                  rclone copyurl {{ .Values.initContainers.downloadChainSnapshot.cmdArgs }} --stdout --error-on-no-transfer ${SNAPSHOT_URL} | tar -x -C /relaychain-data/chains/${RELAY_CHAIN_PATH}/
+
+                elif [ "${METHOD}" == "gcs" ]; then
+                  LATEST=$(rclone cat {{ .Values.initContainers.downloadChainSnapshot.cmdArgs }} --quiet :gcs:${SNAPSHOT_URL}/latest_version.meta.txt)
+                  if [ -z "$LATEST" ]; then
+                    echo "Failed to retrieve latest_version.meta.txt file. Will download everything from ${SNAPSHOT_URL} instead"
+                  fi
+                  rclone sync {{ .Values.initContainers.downloadChainSnapshot.cmdArgs }} --fast-list --transfers $PARALLEL_TRANFERS --progress --error-on-no-transfer :gcs:${SNAPSHOT_URL}/${LATEST} /relaychain-data/chains/${RELAY_CHAIN_PATH}/{{ $databasePath }}/
+
+                elif [ "${METHOD}" == "s3" ]; then
+                  LATEST=$(rclone cat {{ .Values.initContainers.downloadChainSnapshot.cmdArgs }} --quiet :s3:${SNAPSHOT_URL}/latest_version.meta.txt )
+                  if [ -z "$LATEST" ]; then
+                    echo "Failed to retrieve latest_version.meta.txt file. Will download everything from ${SNAPSHOT_URL} instead"
+                  fi
+                  rclone sync {{ .Values.initContainers.downloadChainSnapshot.cmdArgs }} --fast-list --transfers $PARALLEL_TRANFERS --progress --error-on-no-transfer :s3:${SNAPSHOT_URL}/${LATEST} /relaychain-data/chains/${RELAY_CHAIN_PATH}/{{ $databasePath }}/
+
+                elif [ "${METHOD}" == "http-filelist" ]; then
+                  LATEST=$(rclone copyurl {{ .Values.initContainers.downloadChainSnapshot.cmdArgs }} --stdout ${SNAPSHOT_URL}/latest_version.meta.txt )
+                  if [ -z "$LATEST" ]; then
+                    echo "Failed to retrieve latest_version.meta.txt file. Will download everything from ${SNAPSHOT_URL} instead"
+                  else
+                    SNAPSHOT_URL="${SNAPSHOT_URL}/${LATEST}"
+                  fi
+                  rclone copyurl {{ .Values.initContainers.downloadChainSnapshot.cmdArgs }} --error-on-no-transfer ${SNAPSHOT_URL}/{{ .Values.node.collatorRelayChain.chainData.chainSnapshot.filelistName }} /tmp/filelist.txt
+                  rclone copy {{ .Values.initContainers.downloadChainSnapshot.cmdArgs }} --progress --error-on-no-transfer --transfers $PARALLEL_TRANFERS --http-url ${SNAPSHOT_URL} --no-traverse --http-no-head --disable-http2 --files-from /tmp/filelist.txt :http: /relaychain-data/chains/${RELAY_CHAIN_PATH}/{{ $databasePath }}/
                 fi
-              fi
-          env:
-            - name: RELAY_SNAPSHOT_FORMAT
-              value: {{ default "tar" .Values.node.collatorRelayChain.chainData.snapshotFormat }}
-            - name: RELAY_CHAIN_PATH
-              value: {{ default .Values.node.collatorRelayChain.chain .Values.node.collatorRelayChain.chainData.chainPath }}
-          volumeMounts:
-            - mountPath: /relaychain-data
-              name: relaychain-data
-        {{- end }}
-        {{- if .Values.node.enableChainBackupGcs }}
-        - name: backup-chain-gcs
-          image: {{ .Values.googleCloudSdk.image.repository }}:{{ .Values.googleCloudSdk.image.tag }}
-          command: [ "/bin/sh" ]
-          args:
-            - -c
-            - |
-              set -eu {{ if .Values.initContainer.debug }}-x{{ end }}
-              {{- if .Values.googleCloudSdk.serviceAccountKey }}
-              gcloud auth activate-service-account --key-file /tmp/service-account-key.json
-              {{- end }}
-              if [ -d "/chain-data/chains/${CHAIN_PATH}/{{ $databasePath }}" ]; then
-                echo "Chain database directory exists, starting GCS backup sync"
-                BUCKET_URL="{{ .Values.node.chainBackupGcsUrl }}/${HOSTNAME}"
-                NOW=$(date +"%Y%m%d-%H%M%S")
-                echo -e "\nStart gsutil backup\n"
-                gsutil {{ .Values.googleCloudSdk.gsutilFlags }} cp -r /chain-data/chains/${CHAIN_PATH}/{{ $databasePath }}/ ${BUCKET_URL}/${NOW}
-                size=$(gsutil du -s ${BUCKET_URL}/${NOW} | awk '{ print $1 }' )
-                echo "size: ${size}\nversion: {{ .Values.image.tag }}" > /chain-data/now.meta.txt
-                gsutil cp /chain-data/now.meta.txt ${BUCKET_URL}/${NOW}.meta.txt
-                rm -f /chain-data/now.meta.txt
-                echo "${NOW}" > /chain-data/latest_version.meta.txt
-                gsutil cp /chain-data/latest_version.meta.txt ${BUCKET_URL}/latest_version.meta.txt
-                rm -f /chain-data/latest_version.meta.txt
-              fi
-          env:
-            - name: CHAIN_PATH
-              value: {{ default .Values.node.chain .Values.node.chainData.chainPath }}
-          volumeMounts:
-            - mountPath: /chain-data
-              name: chain-data
-            {{- if .Values.googleCloudSdk.serviceAccountKey }}
-            - name: service-account-key
-              mountPath: /tmp
-              readOnly: true
-            {{- end }}
-        {{- end }}
-        {{- if .Values.node.chainData.GCSBucketUrl }}
-        - name: sync-chain-gcs
-          image: {{ .Values.googleCloudSdk.image.repository }}:{{ .Values.googleCloudSdk.image.tag }}
-          command: [ "/bin/sh" ]
-          args:
-            - -c
-            - |
-              set -eu {{ if .Values.initContainer.debug }}-x{{ end }}
-              {{- if .Values.googleCloudSdk.serviceAccountKey }}
-              gcloud auth activate-service-account --key-file /tmp/service-account-key.json
-              {{- end }}
-              if [ -d "/chain-data/chains/${CHAIN_PATH}/{{ $databasePath }}" ]; then
-                echo "Chain database directory already exists, skipping GCS sync"
-              else
-                BUCKET_URL="{{ .Values.node.chainData.GCSBucketUrl }}"
-                LATEST=$(gsutil cat ${BUCKET_URL}/latest_version.meta.txt)
-                if [ -z "$LATEST" ]; then
-                  echo "Failed to retrieve latest_version metadata"
-                  exit 1
-                fi
-                mkdir -p /chain-data/chains/${CHAIN_PATH}/{{ $databasePath }}
-                gsutil {{ .Values.googleCloudSdk.gsutilFlags }} cp -r "${BUCKET_URL}/${LATEST}/*" /chain-data/chains/${CHAIN_PATH}/{{ $databasePath }}/
-              fi
-          env:
-            - name: CHAIN_PATH
-              value: {{ default .Values.node.chain .Values.node.chainData.chainPath }}
-          volumeMounts:
-            - mountPath: /chain-data
-              name: chain-data
-            {{- if .Values.googleCloudSdk.serviceAccountKey }}
-            - name: service-account-key
-              mountPath: /tmp
-              readOnly: true
-            {{- end }}
-        {{- end }}
-        {{- if .Values.node.collatorRelayChain.chainData.GCSBucketUrl }}
-        - name: sync-relay-chain-gcs
-          image: {{ .Values.googleCloudSdk.image.repository }}:{{ .Values.googleCloudSdk.image.tag }}
-          command: [ "/bin/sh" ]
-          args:
-            - -c
-            - |
-              set -eu {{ if .Values.initContainer.debug }}-x{{ end }}
-              {{- if .Values.googleCloudSdk.serviceAccountKey }}
-              gcloud auth activate-service-account --key-file /tmp/service-account-key.json
-              {{- end }}
-              if [ -d "/relaychain-data/chains/${RELAY_CHAIN_PATH}/{{ $databasePath }}" ]; then
-                echo "Relay-chain database directory already exists, skipping GCS sync"
-              else
-                BUCKET_URL="{{ .Values.node.collatorRelayChain.chainData.GCSBucketUrl }}"
-                LATEST=$(gsutil cat ${BUCKET_URL}/latest_version.meta.txt)
-                if [ -z "$LATEST" ]; then
-                  echo "Failed to retrieve latest_version metadata"
-                  exit 1
-                fi
-                mkdir -p /relaychain-data/chains/${RELAY_CHAIN_PATH}/{{ $databasePath }}
-                gsutil {{ .Values.googleCloudSdk.gsutilFlags }} cp -r "${BUCKET_URL}/${LATEST}/*" /relaychain-data/chains/${RELAY_CHAIN_PATH}/{{ $databasePath }}/
               fi
           env:
             - name: RELAY_CHAIN_PATH
               value: {{ default .Values.node.collatorRelayChain.chain .Values.node.collatorRelayChain.chainData.chainPath }}
+            - name: METHOD
+              value: {{ .Values.node.collatorRelayChain.chainData.chainSnapshot.method }}
+            {{- with .Values.initContainers.downloadChainSnapshot.extraEnvVars }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+          {{- toYaml .Values.initContainers.downloadChainSnapshot.resources | nindent 12 }}
           volumeMounts:
             - mountPath: /relaychain-data
               name: relaychain-data
-             {{- if .Values.googleCloudSdk.serviceAccountKey }}
-            - name: service-account-key
-              mountPath: /tmp
-              readOnly: true
-             {{- end }}
-         {{- end }}
-        {{- if or .Values.node.customChainspecUrl .Values.node.collatorRelayChain.customChainspecUrl}}
+          # run as root as lz4 is missing from the default image and can only be installed by the root user
+          {{- if eq .Values.node.collatorRelayChain.chainData.chainSnapshot.method "http-single-tar-lz4" }}
+          securityContext:
+            runAsUser: 0
+          {{- end }}
+        {{- end }}
+        {{- if or .Values.node.customChainspecUrl (or .Values.node.collatorRelayChain.customChainspecUrl .Values.node.collatorLightClient.relayChainCustomChainspecUrl) }}
         - name: download-chainspec
-          image: {{ .Values.initContainer.image.repository }}:{{ .Values.initContainer.image.tag }}
+          image: {{ .Values.initContainers.downloadChainspec.image.repository }}:{{ .Values.initContainers.downloadChainspec.image.tag }}
           command: [ "/bin/sh" ]
           args:
             - -c
             - |
-              set -eu -o pipefail {{ if .Values.initContainer.debug }}-x{{ end }}
+              set -eu -o pipefail {{ if .Values.initContainers.downloadChainspec.debug }}-x{{ end }}
               {{- if .Values.node.customChainspecUrl }}
               {{- if not .Values.node.forceDownloadChainspec }}
               if [ ! -f {{ .Values.node.customChainspecPath }} ]; then
@@ -261,7 +238,7 @@ spec:
               fi
               {{- end }}
               {{- end }}
-              {{- if .Values.node.collatorRelayChain.customChainspecUrl}}
+              {{- if .Values.node.collatorRelayChain.customChainspecUrl }}
               {{- if not .Values.node.forceDownloadChainspec }}
               if [ ! -f {{ .Values.node.collatorRelayChain.customChainspecPath}} ]; then
               {{- end }}
@@ -270,10 +247,21 @@ spec:
               fi
               {{- end }}
               {{- end }}
+              {{- if .Values.node.collatorLightClient.relayChainCustomChainspecUrl }}
+              {{- if not .Values.node.forceDownloadChainspec }}
+              if [ ! -f {{ .Values.node.collatorLightClient.relayChainCustomChainspecPath}} ]; then
+              {{- end }}
+                wget -O {{ .Values.node.collatorLightClient.relayChainCustomChainspecPath}} {{ .Values.node.collatorLightClient.relayChainCustomChainspecUrl }}
+              {{- if not .Values.node.forceDownloadChainspec }}
+              fi
+              {{- end }}
+              {{- end }}
+          resources:
+          {{- toYaml .Values.initContainers.downloadChainspec.resources | nindent 12 }}
           volumeMounts:
             - mountPath: /chain-data
               name: chain-data
-            {{- if and .Values.node.isParachain .Values.node.collatorRelayChain.customChainspecUrl}}
+            {{- if and .Values.node.isParachain .Values.node.collatorRelayChain.customChainspecUrl (and (not .Values.node.collatorExternalRelayChain.enabled ) (not .Values.node.collatorLightClient.enabled))}}
             - mountPath: /relaychain-data
               name: relaychain-data
             {{- end }}
@@ -282,14 +270,16 @@ spec:
         {{- end }}
         {{- if .Values.node.wasmRuntimeUrl }}
         - name: download-runtime
-          image: {{ .Values.initContainer.image.repository }}:{{ .Values.initContainer.image.tag }}
+          image: {{ .Values.initContainers.downloadRuntime.image.repository }}:{{ .Values.initContainers.downloadRuntime.image.tag }}
           command: [ "/bin/sh" ]
           args:
             - -c
             - |
-              set -eu -o pipefail {{ if .Values.initContainer.debug }}-x{{ end }}
+              set -eu -o pipefail {{ if .Values.initContainers.downloadRuntime.debug }}-x{{ end }}
               mkdir -p {{ .Values.node.wasmRuntimeOverridesPath }}
-              wget -nc -P {{ .Values.node.wasmRuntimeOverridesPath }} {{ .Values.node.wasmRuntimeUrl }}
+              test -f "{{ .Values.node.wasmRuntimeOverridesPath }}/$(basename {{ .Values.node.wasmRuntimeUrl }})" || wget -P {{ .Values.node.wasmRuntimeOverridesPath }} {{ .Values.node.wasmRuntimeUrl }}
+          resources:
+          {{- toYaml .Values.initContainers.downloadRuntime.resources | nindent 12 }}
           volumeMounts:
             - mountPath: /chain-data
               name: chain-data
@@ -303,7 +293,7 @@ spec:
           args:
             - -c
             - |
-              set -eu {{ if .Values.initContainer.debug }}-x{{ end }}
+              set -eu {{ if .Values.initContainers.persistGeneratedNodeKey.debug }}-x{{ end }}
               NODE_KEY_PATH="/keystore/node-key"
               if [ -f "${NODE_KEY_PATH}" ]; then
                 echo "Node key already exists, skipping node key generation"
@@ -314,6 +304,8 @@ spec:
               fi
               NODE_PEER_ID="$({{ .Values.node.command }} key inspect-node-key --file ${NODE_KEY_PATH})"
               echo "Node key present in ${NODE_KEY_PATH} with peer-id: ${NODE_PEER_ID}"
+          resources:
+          {{- toYaml .Values.initContainers.persistGeneratedNodeKey.resources | nindent 12 }}
           volumeMounts:
             - mountPath: /keystore
               name: chain-keystore
@@ -325,7 +317,7 @@ spec:
           args:
             - -c
             - |
-              set -eu {{ if .Values.initContainer.debug }}-x{{ end }}
+              set -eu {{ if .Values.initContainers.injectKeys.debug }}-x{{ end }}
               {{- range $keys := .Values.node.keys }}
               if [ ! -f /var/run/secrets/{{ .type }}/type ]; then
                  echo "Error: File /var/run/secrets/{{ .type }}/type does not exist"
@@ -346,6 +338,8 @@ spec:
           env:
             - name: CHAIN
               value: {{ .Values.node.chain }}
+          resources:
+          {{- toYaml .Values.initContainers.injectKeys.resources | nindent 12 }}
           volumeMounts:
             - mountPath: /keystore
               name: chain-keystore
@@ -360,7 +354,7 @@ spec:
           args:
             - -c
             - |
-              set -eu {{ if .Values.initContainer.debug }}-x{{ end }}
+              set -eu {{ if .Values.initContainers.injectKeys.debug }}-x{{ end }}
               {{- range $keys := .Values.node.existingSecrets.keys }}
               if [ ! -f /var/run/secrets/{{ $keys }}/type ]; then
                  echo "Error: File /var/run/secrets/{{ $keys }}/type does not exist"
@@ -377,6 +371,8 @@ spec:
           env:
             - name: CHAIN
               value: {{ .Values.node.chain }}
+          resources:
+          {{- toYaml .Values.initContainers.injectKeys.resources | nindent 12 }}
           volumeMounts:
             - mountPath: /keystore
               name: chain-keystore
@@ -391,7 +387,7 @@ spec:
           args:
             - -c
             - |
-              set -eu {{ if .Values.initContainer.debug }}-x{{ end }}
+              set -eu {{ if .Values.initContainers.injectKeys.debug }}-x{{ end }}
               {{- if .Values.node.vault.nodeKey }}
               NODE_KEY_PATH="/vault/secrets/{{ .Values.node.vault.nodeKey.name }}{{ if .Values.node.vault.nodeKey.vaultKeyAppendPodIndex }}-${HOSTNAME##*-}{{ end }}"
               if [ ! -f ${NODE_KEY_PATH} ]; then
@@ -418,6 +414,8 @@ spec:
               && echo "Inserted key {{ .name }} (type={{ .type }}, scheme={{ .scheme }}) into Keystore" \
               || echo "Failed to insert key {{ .name }} (type={{ .type }}, scheme={{ .scheme }}) into Keystore."
               {{- end }}
+          resources:
+          {{- toYaml .Values.initContainers.injectKeys.resources | nindent 12 }}
           env:
             - name: CHAIN
               value: {{ .Values.node.chain }}
@@ -427,14 +425,14 @@ spec:
         {{- end }}
         {{- if or (eq .Values.node.perNodeServices.relayP2pService.type "NodePort") (eq .Values.node.perNodeServices.paraP2pService.type "NodePort") .Values.node.perNodeServices.setPublicAddressToExternalIp.enabled }}
         - name: retrieve-service-info
-          image: {{ .Values.kubectl.image.repository }}:{{ .Values.kubectl.image.tag }}
+          image: {{ .Values.initContainers.retrieveServiceInfo.image.repository }}:{{ .Values.initContainers.retrieveServiceInfo.image.tag }}
           command: [ "/bin/sh" ]
           args:
             - -c
             - |
-              set -eu {{ if .Values.initContainer.debug }}-x{{ end }}
+              set -eu -o pipefail {{ if .Values.initContainers.retrieveServiceInfo.debug }}-x{{ end }}
               POD_INDEX="${HOSTNAME##*-}"
-              {{- if and .Values.node.perNodeServices.relayP2pService.enabled (eq .Values.node.perNodeServices.relayP2pService.type "NodePort") }}
+              {{- if and .Values.node.perNodeServices.relayP2pService.enabled (and (not .Values.node.collatorExternalRelayChain.enabled ) (not .Values.node.collatorLightClient.enabled)) (eq .Values.node.perNodeServices.relayP2pService.type "NodePort") }}
               RELAY_CHAIN_P2P_PORT="$(kubectl --namespace {{ .Release.Namespace }} get service {{ $fullname }}-${POD_INDEX}-relay-chain-p2p -o jsonpath='{.spec.ports[?(@.name=="p2p")].nodePort}')"
               {{- if .Values.node.perNodeServices.relayP2pService.ws.enabled }}
               RELAY_CHAIN_P2P_PORT_WS="$(kubectl --namespace {{ .Release.Namespace }} get service {{ $fullname }}-${POD_INDEX}-relay-chain-p2p -o jsonpath='{.spec.ports[?(@.name=="ws")].nodePort}')"
@@ -460,6 +458,8 @@ spec:
               echo "${EXTERNAL_IP}" > /chain-data/node_external_ip
               echo "Retrieved external IP from {{ .Values.node.perNodeServices.ipRetrievalServiceUrl }}, saved ${EXTERNAL_IP} to /chain-data/node_external_ip"
               {{- end }}
+          resources:
+          {{- toYaml .Values.initContainers.retrieveServiceInfo.resources | nindent 12 }}
           volumeMounts:
             - mountPath: /chain-data
               name: chain-data
@@ -481,7 +481,8 @@ spec:
               EXTERNAL_IP="$(cat /chain-data/node_external_ip)"
               echo "EXTERNAL_IP=${EXTERNAL_IP}"
               {{- end }}
-              {{- if and .Values.node.perNodeServices.relayP2pService.enabled (eq .Values.node.perNodeServices.relayP2pService.type "NodePort") }}
+              {{- if  and (not .Values.node.collatorExternalRelayChain.enabled) (not .Values.node.collatorLightClient.enabled) }}
+              {{- if and .Values.node.perNodeServices.relayP2pService.enabled (eq .Values.node.perNodeServices.relayP2pService.type "NodePort")  }}
               {{- /* For NodePort services, set the p2p port to the value saved in the retrieve-service-info init container */}}
               RELAY_CHAIN_P2P_PORT="$(cat /chain-data/relay_chain_p2p_port)"
               echo "RELAY_CHAIN_P2P_PORT=${RELAY_CHAIN_P2P_PORT}"
@@ -496,6 +497,7 @@ spec:
               {{- if .Values.node.perNodeServices.relayP2pService.ws.enabled }}
               RELAY_CHAIN_P2P_PORT_WS={{ $.Values.node.perNodeServices.relayP2pService.ws.port | quote }}
               echo "RELAY_CHAIN_P2P_PORT_WS=${RELAY_CHAIN_P2P_PORT_WS}"
+              {{- end }}
               {{- end }}
               {{- end }}
               {{- if .Values.node.isParachain }}
@@ -548,6 +550,11 @@ spec:
                 It is not a security risk unless they are exposed publicly.
                 */}}
                 --unsafe-rpc-external \
+                {{- if .Values.node.legacyRpcFlags }}
+                --unsafe-ws-external \
+                {{- else }}
+                --rpc-port={{ .Values.node.perNodeServices.apiService.rpcPort | int }} \
+                {{- end }}
                 {{- /*
                 CORS must be set to 'all' to allow RPC requests including Kubernetes heathchecks.
                 */}}
@@ -572,9 +579,9 @@ spec:
                 {{- if .Values.node.persistGeneratedNodeKey }}
                 --node-key-file /keystore/node-key \
                 {{- else if .Values.node.customNodeKey }}
-                --node-key $(cat /tmp/custom-node-key) \
+                --node-key $(cat /custom-node-key/custom-node-key) \
                 {{- else if .Values.node.existingSecrets.nodeKey }}
-                --node-key $(cat /tmp/{{ .Values.node.existingSecrets.nodeKey.secretKey }}) \
+                --node-key $(cat /custom-node-key/{{ .Values.node.existingSecrets.nodeKey.secretKey }}) \
                 {{- else if .Values.node.vault.nodeKey }}
                 --node-key $(cat /vault/secrets/{{ .Values.node.vault.nodeKey.name }}{{ if .Values.node.vault.nodeKey.vaultKeyAppendPodIndex }}-${POD_INDEX}{{ end }}) \
                 {{- end }}
@@ -599,12 +606,21 @@ spec:
                 {{ . }} \
                 {{- end }}
                 {{- end }}
-                {{- if .Values.node.isParachain }}
+                {{- if .Values.node.enableOffchainIndexing }}
+                --enable-offchain-indexing true \
+                {{- end }}
+                {{- if and .Values.node.isParachain (not .Values.node.collatorExternalRelayChain.enabled ) }}
                 -- \
+                {{- if  .Values.node.collatorLightClient.enabled }}
+                --chain={{ if .Values.node.collatorLightClient.relayChainCustomChainspecUrl }}{{ .Values.node.collatorLightClient.relayChainCustomChainspecPath }}{{ else }}{{.Values.node.collatorLightClient.relayChain}}{{ end }}
+                {{- else if .Values.node.collatorRelayChain.customChainspecUrl }}
+                --chain={{ .Values.node.collatorRelayChain.customChainspecPath }} \
+                {{- end }}
+                {{- if  not .Values.node.collatorLightClient.enabled }}
                 --name=${POD_NAME} \
                 --base-path=/relaychain-data \
                 --keystore-path=/relaychain-keystore \
-                {{- if .Values.node.collatorRelayChain.chainData.database }}
+                {{- if .Values.node.collatorRelayChain.chainData.database}}
                 --database={{ .Values.node.collatorRelayChain.chainData.database }} \
                 {{- end }}
                 {{- if ge ( int .Values.node.collatorRelayChain.chainData.pruning ) 1 }}
@@ -616,9 +632,6 @@ spec:
                 --prometheus-external \
                 --prometheus-port {{ .Values.node.collatorRelayChain.prometheus.port }} \
                 {{- end }}
-                {{- if .Values.node.collatorRelayChain.customChainspecUrl}}
-                --chain={{ .Values.node.collatorRelayChain.customChainspecPath}} \
-                {{- end }}
                 {{- range .Values.node.telemetryUrls }}
                 --telemetry-url={{ . | squote }} \
                 {{- end }}
@@ -627,6 +640,7 @@ spec:
                 {{- fail (printf "%s should not be set through `node.collatorRelayChain.flags` but with the appropriate chart value" .) }}
                 {{- else }}
                 {{ . }} \
+                {{- end }}
                 {{- end }}
                 {{- end }}
                 {{- end }}
@@ -656,22 +670,23 @@ spec:
             {{- toYaml . | nindent 12 }}
             {{- end}}
           ports:
+            {{- if .Values.node.legacyRpcFlags }}
             - containerPort: 9933
               name: http-rpc
-              protocol: TCP
             - containerPort: 9944
               name: websocket-rpc
-              protocol: TCP
+            {{- else }}
+            - containerPort: {{ $.Values.node.perNodeServices.apiService.rpcPort | int }}
+              name: rpc
+            {{- end }}
             - containerPort: {{ .Values.node.prometheus.port }}
               name: prometheus
-              protocol: TCP
             {{- if and .Values.node.isParachain .Values.node.collatorRelayChain.prometheus.enabled }}
             - containerPort: {{ .Values.node.collatorRelayChain.prometheus.port }}
               name: prom-relaychain
             {{- end }}
             - containerPort: 30333
               name: p2p
-              protocol: TCP
           {{- if .Values.node.enableStartupProbe }}
           # On startup, retry the connection to the /health endpoint every 10s for 5 min before killing the container
           startupProbe:
@@ -679,7 +694,11 @@ spec:
             periodSeconds: 10
             httpGet:
               path: /health
+              {{- if .Values.node.legacyRpcFlags }}
               port: http-rpc
+              {{- else }}
+              port: rpc
+              {{- end }}
           {{- end }}
           resources:
           {{- toYaml .Values.node.resources | nindent 12 }}
@@ -688,7 +707,7 @@ spec:
               name: chain-data
             - mountPath: /keystore
               name: chain-keystore
-            {{- if .Values.node.isParachain }}
+            {{- if and .Values.node.isParachain (not .Values.node.collatorExternalRelayChain.enabled) (not .Values.node.collatorLightClient.enabled) }}
             - mountPath: /relaychain-data
               name: relaychain-data
             - mountPath: /relaychain-keystore
@@ -706,11 +725,11 @@ spec:
           {{- end }}
           {{- if .Values.node.persistGeneratedNodeKey }}
           {{- else if .Values.node.customNodeKey }}
-            - mountPath: /tmp/
+            - mountPath: /custom-node-key/
               name: custom-node-key
               readOnly: true
           {{- else if .Values.node.existingSecrets.nodeKey }}
-            - mountPath: /tmp/
+            - mountPath: /custom-node-key/
               name: node-key
               readOnly: true
           {{- end }}
@@ -720,14 +739,27 @@ spec:
           env:
             {{- range $key, $val := .Values.substrateApiSidecar.env }}
             - name: {{ $key }}
-              value: {{ $val }}
+              value: {{ $val | squote }}
             {{- end }}
+          args:
+          {{- range .Values.substrateApiSidecar.args }}
+            - "{{ . }}"
+          {{- end }}
+          {{- if .Values.substrateApiSidecar.metrics.enabled }}
+            - "--prometheus"
+            - "--prometheus-port={{ .Values.substrateApiSidecar.metrics.port }}"
+          {{- end }}
           resources:
           {{- toYaml .Values.substrateApiSidecar.resources | nindent 12 }}
           ports:
             - containerPort: 8080
               name: api-sidecar
               protocol: TCP
+            {{- if .Values.substrateApiSidecar.metrics.enabled }}
+            - containerPort: {{ .Values.substrateApiSidecar.metrics.port }}
+              name: prom-sidecar
+              protocol: TCP
+            {{- end }}
         {{- end }}
         {{- if .Values.node.tracing.enabled }}
         - name: jaeger-agent-sidecar
@@ -737,7 +769,7 @@ spec:
           env:
             {{- range $key, $val := .Values.jaegerAgent.env }}
             - name: {{ $key }}
-              value: {{ $val }}
+              value: {{ $val | squote }}
             {{- end }}
           resources:
           {{- toYaml .Values.jaegerAgent.resources | nindent 12 }}
@@ -767,8 +799,12 @@ spec:
         - name: ws-health-exporter
           image: {{ .Values.wsHealthExporter.image.repository }}:{{ .Values.wsHealthExporter.image.tag }}
           env:
-            - name: NODE_URL
-              value: ws://127.0.0.1:9944
+            {{- $wsHealthExporterEnvDefault := dict "WSHE_NODE_RPC_URLS" (tpl "ws://127.0.0.1:{{ .Values.node.perNodeServices.apiService.rpcPort | int }}" .) }}
+            {{- $wsHealthExporterEnv := mergeOverwrite $wsHealthExporterEnvDefault $.Values.wsHealthExporter.env }}
+            {{- range $key, $val := $wsHealthExporterEnv }}
+            - name: {{ $key }}
+              value: {{ $val | squote }}
+            {{- end }}
           resources:
           {{- toYaml .Values.wsHealthExporter.resources | nindent 12 }}
           {{- if .Values.node.enableSidecarReadinessProbe }}
@@ -818,11 +854,6 @@ spec:
             secretName: {{ .secretName }}
             optional: {{ .optional }}
             defaultMode: {{ .defaultMode }}
-      {{- end }}
-      {{- if .Values.googleCloudSdk.serviceAccountKey }}
-        - name: service-account-key
-          secret:
-            secretName: {{ $fullname }}-gcs-bucket-service-account-key
       {{- end }}
       {{- if .Values.node.persistGeneratedNodeKey }}
       {{- else if .Values.node.customNodeKey }}
@@ -913,7 +944,7 @@ spec:
           requests:
             storage: {{ .Values.node.chainKeystore.volumeSize }}
     {{- end }}
-    {{- if .Values.node.isParachain }}
+    {{- if and .Values.node.isParachain (and (not .Values.node.collatorExternalRelayChain.enabled ) (not .Values.node.collatorLightClient.enabled)) }}
     - apiVersion: v1
       kind: PersistentVolumeClaim
       metadata:

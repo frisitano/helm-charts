@@ -1,3 +1,4 @@
+{{ $rolesSupported := include "introspector.rolesSupported" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -16,7 +17,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       labels:
-        {{- include "polkadot-introspector.selectorLabels" . | nindent 8 }}
+        {{- include "polkadot-introspector.labels" . | nindent 8 }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -35,11 +36,29 @@ spec:
           args:
             - -c
             - |
-              exec polkadot-introspector \
-              {{-  if eq .Values.introspector.role "block-time-monitor"}}
-              block-time-monitor \
+              {{- if not (regexMatch $rolesSupported .Values.introspector.role) }}
+              {{- fail (printf "Error: introspector.role='%s' is not supported, it must be validated by this regex '%s'" .Values.introspector.role $rolesSupported) }}
+              {{- else }}
+              {{-  if eq .Values.introspector.role "block-time"}}
+              exec polkadot-introspector/polkadot-block-time \
+              {{- else if eq .Values.introspector.role "parachain-tracer"}}
+              exec polkadot-introspector/polkadot-parachain-tracer \
+              {{- if .Values.introspector.enableAllParas }}
+              --all \
+              {{- else }}
+              {{- range .Values.introspector.paraIds }}
+              --para-id {{ . }} \
+              {{- end }}
+              {{- end }}
+              {{- end }}
               --ws {{ join "," .Values.introspector.rpcNodes }} \
+              {{- if .Values.introspector.verboseLogging }}
+              -v \
+              {{- end }}
               prometheus --port {{ .Values.introspector.prometheusPort }}
+              {{- range .Values.introspector.extraArgs }}
+              {{ . }} \
+              {{- end }}
               {{- end }}
           ports:
             - name: http
