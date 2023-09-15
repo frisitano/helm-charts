@@ -2,6 +2,19 @@ apiVersion: v1
 entries:
   bridges-common-relay:
   - apiVersion: v2
+    created: "2023-09-15T12:30:05.098240545Z"
+    description: A Helm chart for bridges-common-relay
+    digest: 4fc9597585d6606cd709fca6daff8fbe01e386f3ea7db3ecdd5f3fabfd768575
+    maintainers:
+    - email: devops+helm@parity.io
+      name: Parity
+      url: https://github.com/paritytech/helm-charts
+    name: bridges-common-relay
+    type: application
+    urls:
+    - https://github.com/frisitano/helm-charts/releases/download/bridges-common-relay-0.2.3/bridges-common-relay-0.2.3.tgz
+    version: 0.2.3
+  - apiVersion: v2
     created: "2023-03-04T17:41:35.095455793Z"
     description: A Helm chart for bridges-common-relay
     digest: 193ff737ccb779a92d6cd53886ff8426ba166ed5496be80b76e37726ccc5ae9a
@@ -15,6 +28,18 @@ entries:
     version: 0.2.0
   common:
   - apiVersion: v2
+    created: "2023-09-15T12:30:05.261638093Z"
+    description: A generic helm chart for Kubernetes
+    digest: 9094d0c10e176da93ba29183d5f88870e4a9a74dd8903d3a9fd4fafcc1067dd3
+    maintainers:
+    - name: Parity
+      url: https://github.com/paritytech/helm-charts
+    name: common
+    type: application
+    urls:
+    - https://github.com/frisitano/helm-charts/releases/download/common-0.7.0/common-0.7.0.tgz
+    version: 0.7.0
+  - apiVersion: v2
     created: "2023-03-04T17:41:35.284154591Z"
     description: A generic helm chart for Kubernetes
     digest: e015cf492c46d3b0ae2acb0d45691b1a1ce4f817f3b89a976e28485f8737b427
@@ -27,6 +52,19 @@ entries:
     - https://github.com/frisitano/helm-charts/releases/download/common-0.6.6/common-0.6.6.tgz
     version: 0.6.6
   node:
+  - apiVersion: v2
+    created: "2023-09-15T12:30:05.449740022Z"
+    description: A Helm chart to deploy Substrate/Polkadot nodes
+    digest: aaf023986fc312dd8798a0bd8e54cf6c49868c398fcc45c9c93a3653a2d4244e
+    maintainers:
+    - email: devops+helm@parity.io
+      name: Parity
+      url: https://github.com/paritytech/helm-charts
+    name: node
+    type: application
+    urls:
+    - https://github.com/frisitano/helm-charts/releases/download/node-5.3.2/node-5.3.2.tgz
+    version: 5.3.2
   - apiVersion: v2
     created: "2023-09-14T04:17:40.484335547Z"
     description: A Helm chart to deploy Substrate/Polkadot nodes
@@ -66,6 +104,20 @@ entries:
   polkadot-basic-notification:
   - apiVersion: v2
     appVersion: 0.1.0
+    created: "2023-09-15T12:30:05.580186593Z"
+    description: A Helm chart for Kubernetes
+    digest: cd71b93057a65bf94f56f9d9901b08317fedaf824c7c68867dff7ac9d36003cd
+    maintainers:
+    - email: devops+helm@parity.io
+      name: Parity
+      url: https://github.com/paritytech/helm-charts
+    name: polkadot-basic-notification
+    type: application
+    urls:
+    - https://github.com/frisitano/helm-charts/releases/download/polkadot-basic-notification-1.0.3/polkadot-basic-notification-1.0.3.tgz
+    version: 1.0.3
+  - apiVersion: v2
+    appVersion: 0.1.0
     created: "2023-03-04T17:41:35.636245888Z"
     description: A Helm chart for Kubernetes
     digest: 888e6aba8addffe8a0f5de6346c692d9d5c8042caa633d2a50bbe1b4fd763a19
@@ -78,6 +130,20 @@ entries:
     - https://github.com/frisitano/helm-charts/releases/download/polkadot-basic-notification-1.0.1/polkadot-basic-notification-1.0.1.tgz
     version: 1.0.1
   polkadot-introspector:
+  - apiVersion: v2
+    appVersion: 1.0.0
+    created: "2023-09-15T12:30:05.712350305Z"
+    description: A Helm chart to deploy polkadot-introspector
+    digest: edd1cf98cfd64466fe076ef8d185f5da1083f0206504d29cf742b179edd3751b
+    maintainers:
+    - email: devops+helm@parity.io
+      name: Parity
+      url: https://github.com/paritytech/helm-charts
+    name: polkadot-introspector
+    type: application
+    urls:
+    - https://github.com/frisitano/helm-charts/releases/download/polkadot-introspector-0.4.5/polkadot-introspector-0.4.5.tgz
+    version: 0.4.5
   - apiVersion: v2
     appVersion: 0.1.0
     created: "2023-03-04T17:41:35.835182386Z"
@@ -108,7 +174,39 @@ entries:
     urls:
     - https://github.com/frisitano/helm-charts/releases/download/polkadot-runtime-exporter-1.2.0/polkadot-runtime-exporter-1.2.0.tgz
     version: 1.2.0
+  polkadot-stps:
+  - apiVersion: v2
+    appVersion: 1.0.0
+    created: "2023-09-15T12:30:05.849270329Z"
+    description: A Helm chart to deploy polkadot-stps
+    digest: 3fdbe0377564c16c3128738f9496eb443e4728efce479f5f6199ec154654d722
+    maintainers:
+    - email: devops+helm@parity.io
+      name: Parity
+      url: https://github.com/paritytech/helm-charts
+    name: polkadot-stps
+    type: application
+    urls:
+    - https://github.com/frisitano/helm-charts/releases/download/polkadot-stps-0.1.0/polkadot-stps-0.1.0.tgz
+    version: 0.1.0
   staking-miner:
+  - apiVersion: v2
+    created: "2023-09-15T12:30:06.002077028Z"
+    dependencies:
+    - name: common
+      repository: https://charts.bitnami.com/bitnami
+      version: 1.14.1
+    description: A Helm chart to deploy staking miner (https://github.com/paritytech/staking-miner)
+    digest: 3ca750ee1001451e5b97b68d4d1acc8acca6a5e02a42588bb5f9a97328807527
+    maintainers:
+    - email: devops+helm@parity.io
+      name: Parity
+      url: https://github.com/paritytech/helm-charts
+    name: staking-miner
+    type: application
+    urls:
+    - https://github.com/frisitano/helm-charts/releases/download/staking-miner-2.0.0/staking-miner-2.0.0.tgz
+    version: 2.0.0
   - apiVersion: v2
     created: "2023-03-04T17:41:36.712709577Z"
     dependencies:
@@ -127,6 +225,23 @@ entries:
     version: 1.3.2
   substrate-faucet:
   - apiVersion: v2
+    created: "2023-09-15T12:30:06.144350478Z"
+    dependencies:
+    - name: postgresql
+      repository: https://charts.bitnami.com/bitnami
+      version: 12.8.3
+    description: A Helm chart to deploy substrate-faucet
+    digest: 705cc3af7ea015d031981bec390fcb138cf4b5f36a996fb2c88ebe53500b0ec0
+    maintainers:
+    - email: devops+helm@parity.io
+      name: Parity
+      url: https://github.com/paritytech/helm-charts
+    name: substrate-faucet
+    type: application
+    urls:
+    - https://github.com/frisitano/helm-charts/releases/download/substrate-faucet-3.0.2/substrate-faucet-3.0.2.tgz
+    version: 3.0.2
+  - apiVersion: v2
     created: "2023-03-04T17:41:36.883479376Z"
     description: A Helm chart to deploy substrate-faucet
     digest: 45908b0da0b25ed966622beb5b07fcf0f13497c7e76ccb3b540b7f0c00706f40
@@ -139,6 +254,20 @@ entries:
     - https://github.com/frisitano/helm-charts/releases/download/substrate-faucet-1.3.1/substrate-faucet-1.3.1.tgz
     version: 1.3.1
   substrate-telemetry:
+  - apiVersion: v2
+    appVersion: 1.16.0
+    created: "2023-09-15T12:30:06.308311938Z"
+    description: A Helm chart for substrate-telemetry
+    digest: a7a477dea0970748a17209c7304f8b9b9d2b763a9d747b224e8f11d3f23720d8
+    maintainers:
+    - email: devops+helm@parity.io
+      name: Parity
+      url: https://github.com/paritytech/helm-charts
+    name: substrate-telemetry
+    type: application
+    urls:
+    - https://github.com/frisitano/helm-charts/releases/download/substrate-telemetry-2.3.1/substrate-telemetry-2.3.1.tgz
+    version: 2.3.1
   - apiVersion: v2
     appVersion: 1.16.0
     created: "2023-03-04T17:41:37.077209074Z"
@@ -154,6 +283,20 @@ entries:
     version: 2.2.0
   testnet-manager:
   - apiVersion: v2
+    appVersion: 1.0.0
+    created: "2023-09-15T12:30:06.424522075Z"
+    description: A Helm chart to deploy testnet-manager
+    digest: bd539f934b0ad3ed6be63bbeb6f12822e085b8209cd79594ed47c8bcb989d3a8
+    maintainers:
+    - email: devops+helm@parity.io
+      name: Parity
+      url: https://github.com/paritytech/helm-charts
+    name: testnet-manager
+    type: application
+    urls:
+    - https://github.com/frisitano/helm-charts/releases/download/testnet-manager-1.3.1/testnet-manager-1.3.1.tgz
+    version: 1.3.1
+  - apiVersion: v2
     appVersion: 1.2.1
     created: "2023-03-04T17:41:37.241901672Z"
     description: A Helm chart to deploy testnet-manager
@@ -166,4 +309,4 @@ entries:
     urls:
     - https://github.com/frisitano/helm-charts/releases/download/testnet-manager-1.1.2/testnet-manager-1.1.2.tgz
     version: 1.1.2
-generated: "2023-09-14T04:17:40.484736566Z"
+generated: "2023-09-15T12:30:06.424767581Z"
